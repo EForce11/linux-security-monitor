@@ -1,0 +1,17 @@
+# ============================================
+# Security Audit Config
+# Copy to ~/.security_audit.conf and edit.
+# ============================================
+
+# Whitelisted users (space-separated) — won't be flagged in audit output
+WHITELIST_USERS="root ubuntu sync"
+
+# Whitelisted services — won't appear under "unexpected services"
+WHITELIST_SERVICES="systemd network ssh cron ufw fail2ban docker tailscale rsyslog dbus accounts unattended snapd multipathd oracle unified polkit udisks ModemManager cloudflared"
+
+# Whitelisted ports — will be shown as OK instead of WARNING
+WHITELIST_PORTS="22 53"
+
+# Whitelisted Docker bind mounts — paths that are expected and safe
+WHITELIST_MOUNTS=""
+# Example: WHITELIST_MOUNTS="/home/ubuntu/vaultwarden/vw-data"

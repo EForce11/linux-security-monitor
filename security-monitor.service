@@ -1,0 +1,13 @@
+[Unit]
+Description=Security Monitor Daemon
+After=network.target
+
+[Service]
+Type=simple
+User={{USER}}
+ExecStart=/bin/bash {{HOME}}/security_monitor.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
