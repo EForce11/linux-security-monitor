@@ -1,6 +1,7 @@
 #!/bin/bash
 # ============================================
-# Security Monitor - Install Script
+# Linux Security Monitor - Install Script (v3)
+# Installs security_audit.sh, config, and systemd timer
 # Run with: sudo ./install.sh
 # ============================================
 set -euo pipefail
@@ -10,8 +11,6 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-REAL_USER="${SUDO_USER:-ubuntu}"
-REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log()  { echo -e "\e[1m[•] $1\e[0m"; }
@@ -20,7 +19,7 @@ warn() { echo -e "\e[33m[!] $1\e[0m"; }
 die()  { echo -e "\e[31m[✗] $1\e[0m"; exit 1; }
 
 echo -e "\e[1m================================================\e[0m"
-echo -e "\e[1m   Linux Security Monitor - Installer\e[0m"
+echo -e "\e[1m   Linux Security Monitor - Installer (v3)\e[0m"
 echo -e "\e[1m================================================\e[0m"
 echo ""
 
@@ -28,82 +27,63 @@ echo ""
 # CHECK REQUIRED FILES
 # ============================================
 log "Checking required files..."
-[[ -f "$SCRIPT_DIR/scripts/security_monitor.sh" ]] || die "scripts/security_monitor.sh not found"
-[[ -f "$SCRIPT_DIR/scripts/security_audit.sh" ]]   || die "scripts/security_audit.sh not found"
+[[ -f "$SCRIPT_DIR/scripts/security_audit.sh" ]] || die "scripts/security_audit.sh not found"
+[[ -f "$SCRIPT_DIR/config/security_audit.conf.example" ]] || die "config/security_audit.conf.example not found"
+[[ -f "$SCRIPT_DIR/systemd/security-audit.service" ]] || die "systemd/security-audit.service not found"
+[[ -f "$SCRIPT_DIR/systemd/security-audit.timer" ]] || die "systemd/security-audit.timer not found"
 ok "All required files found"
 
 # ============================================
-# DEPENDENCIES
+# INSTALL AUDIT SCRIPT
 # ============================================
-log "Installing dependencies..."
-apt-get update -qq
-apt-get install -y -qq curl inotify-tools
-ok "Dependencies installed (curl, inotify-tools)"
-
-# ============================================
-# INSTALL SCRIPTS
-# ============================================
-log "Installing scripts to $REAL_HOME/..."
-install -o "$REAL_USER" -g "$REAL_USER" -m 750 \
-    "$SCRIPT_DIR/scripts/security_monitor.sh" "$REAL_HOME/security_monitor.sh"
-install -o "$REAL_USER" -g "$REAL_USER" -m 750 \
-    "$SCRIPT_DIR/scripts/security_audit.sh" "$REAL_HOME/security_audit.sh"
-ok "Scripts installed"
+log "Installing security_audit.sh to /usr/local/bin/..."
+install -o root -g root -m 755 \
+    "$SCRIPT_DIR/scripts/security_audit.sh" /usr/local/bin/security_audit.sh
+ok "Audit script installed to /usr/local/bin/security_audit.sh"
 
 # ============================================
 # CONFIG FILE
 # ============================================
-MONITOR_CONF="$REAL_HOME/.security_monitor.conf"
-AUDIT_CONF="$REAL_HOME/.security_audit.conf"
+CONFIG_FILE="/etc/security_audit.conf"
 
-if [[ -f "$MONITOR_CONF" ]]; then
-    warn "Monitor config already exists at $MONITOR_CONF — skipping"
+if [[ -f "$CONFIG_FILE" ]]; then
+    warn "Config already exists at $CONFIG_FILE — skipping (will not overwrite)"
 else
-    log "Setting up monitor config..."
+    log "Setting up config..."
     echo ""
     read -rp "  Enter your ntfy.sh topic (leave blank to configure later): " NTFY_TOPIC
     echo ""
 
-    cp "$SCRIPT_DIR/config/security_monitor.conf.example" "$MONITOR_CONF"
-    sed -i "s|NTFY_TOPIC=\"\"|NTFY_TOPIC=\"$NTFY_TOPIC\"|" "$MONITOR_CONF"
-    chown "$REAL_USER:$REAL_USER" "$MONITOR_CONF"
-    chmod 600 "$MONITOR_CONF"
-    ok "Monitor config created at $MONITOR_CONF"
-fi
-
-if [[ -f "$AUDIT_CONF" ]]; then
-    warn "Audit config already exists at $AUDIT_CONF — skipping"
-else
-    cp "$SCRIPT_DIR/config/security_audit.conf.example" "$AUDIT_CONF"
-    chown "$REAL_USER:$REAL_USER" "$AUDIT_CONF"
-    chmod 600 "$AUDIT_CONF"
-    ok "Audit config created at $AUDIT_CONF"
+    cp "$SCRIPT_DIR/config/security_audit.conf.example" "$CONFIG_FILE"
+    if [[ -n "$NTFY_TOPIC" ]]; then
+        sed -i "s|NTFY_TOPIC=\"\"|NTFY_TOPIC=\"$NTFY_TOPIC\"|" "$CONFIG_FILE"
+    fi
+    chmod 600 "$CONFIG_FILE"
+    ok "Config created at $CONFIG_FILE"
 fi
 
 # ============================================
-# SYSTEMD SERVICE
+# SYSTEMD SERVICE & TIMER
 # ============================================
-log "Installing systemd service..."
-sed "s|{{USER}}|$REAL_USER|g; s|{{HOME}}|$REAL_HOME|g" \
-    "$SCRIPT_DIR/systemd/security-monitor.service" \
-    > /etc/systemd/system/security-monitor.service
+log "Installing systemd units..."
+cp "$SCRIPT_DIR/systemd/security-audit.service" /etc/systemd/system/security-audit.service
+cp "$SCRIPT_DIR/systemd/security-audit.timer" /etc/systemd/system/security-audit.timer
 
 systemctl daemon-reload
-systemctl enable security-monitor.service
-systemctl restart security-monitor.service
-ok "Service installed and started"
+systemctl enable security-audit.timer
+systemctl start security-audit.timer
+ok "systemd timer installed and started (runs every 6 hours)"
 
 # ============================================
 # VERIFY
 # ============================================
 echo ""
 log "Verifying installation..."
-sleep 2
 
-if systemctl is-active --quiet security-monitor.service; then
-    ok "security-monitor.service is running"
+if systemctl is-active --quiet security-audit.timer; then
+    ok "security-audit.timer is active"
 else
-    die "Service failed to start. Check: journalctl -u security-monitor.service -n 20"
+    warn "Timer may not have started. Check: systemctl status security-audit.timer"
 fi
 
 # ============================================
@@ -114,19 +94,21 @@ echo -e "\e[1m================================================\e[0m"
 echo -e "\e[1m   Installation complete on $(hostname)\e[0m"
 echo -e "\e[1m================================================\e[0m"
 echo ""
-echo "  Scripts:       $REAL_HOME/security_monitor.sh"
-echo "                 $REAL_HOME/security_audit.sh"
-echo "  Monitor conf:  $MONITOR_CONF"
-echo "  Audit conf:    $AUDIT_CONF"
+echo "  Audit script:  /usr/local/bin/security_audit.sh"
+echo "  Config file:   $CONFIG_FILE"
+echo "  Service:       /etc/systemd/system/security-audit.service"
+echo "  Timer:         /etc/systemd/system/security-audit.timer"
+echo "  Log output:    /var/log/security_audit.log"
 echo ""
 echo "  Useful commands:"
-echo "    journalctl -u security-monitor.service -f   # live logs"
-echo "    systemctl status security-monitor.service   # status"
-echo "    ~/security_audit.sh                         # manual audit"
+echo "    security_audit.sh                              # run manually"
+echo "    security_audit.sh --section users,ports         # specific sections"
+echo "    security_audit.sh --ntfy my-topic               # with push notification"
+echo "    systemctl status security-audit.timer           # timer status"
+echo "    journalctl -u security-audit.service -n 50      # last audit logs"
 echo ""
 
-NTFY_TOPIC_VAL=$(grep "NTFY_TOPIC=" "$MONITOR_CONF" | cut -d'"' -f2)
+NTFY_TOPIC_VAL=$(grep "NTFY_TOPIC=" "$CONFIG_FILE" 2>/dev/null | cut -d'"' -f2)
 if [[ -z "$NTFY_TOPIC_VAL" ]]; then
-    warn "NTFY_TOPIC is not set. Edit $MONITOR_CONF and run:"
-    warn "  sudo systemctl restart security-monitor.service"
+    warn "NTFY_TOPIC is not set. Edit $CONFIG_FILE to enable push notifications."
 fi

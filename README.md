@@ -1,188 +1,240 @@
 # Linux Security Monitor
 
-A lightweight, event-driven security monitoring toolkit for Linux servers. Watches system logs in real-time and sends instant push notifications via [ntfy.sh](https://ntfy.sh) when something critical happens — no polling, no noise, no false alarms unless there's something worth seeing.
+<div align="center">
 
----
+**Zero-dependency Bash Mini-HIDS for Linux servers**
 
-## How It Works
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Shell](https://img.shields.io/badge/Shell-Bash%205%2B-green.svg)](https://www.gnu.org/software/bash/)
+[![Notifications](https://img.shields.io/badge/Alerts-ntfy.sh-yellow.svg)](https://ntfy.sh)
+
+</div>
+
+A lightweight, baseline-driven security auditing toolkit that monitors 12 critical areas of your Linux server. No agents, no dependencies, no bloat — just a single Bash script, a whitelist config, and `systemd` automation with real-time push notifications via [ntfy.sh](https://ntfy.sh).
+
+## Features
+
+- **🔍 12 Audit Modules** — Comprehensive coverage from SSH config to Docker bind mounts
+- **📋 Whitelist-Based Detection** — Define your baseline; anything outside it gets flagged
+- **📲 Push Notifications** — Instant alerts via [ntfy.sh](https://ntfy.sh) with severity-based priority
+- **⏱️ systemd Timer** — Automated audits every 6 hours (replaces cron)
+- **🚫 Zero Dependencies** — Pure Bash + standard Linux utilities (`ss`, `find`, `grep`, `systemctl`)
+- **📄 Color-Stripped Logging** — Output to file with ANSI codes automatically removed
+- **🎯 Selective Scanning** — Run individual modules or combinations via `--section`
+
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────┐
-│                  security_monitor               │
-│                    (daemon)                     │
-├─────────────┬──────────────┬────────────────────┤
-│  /var/log/  │   systemd    │  custom app logs   │
-│  auth.log   │   journal    │  (configurable)    │
-└──────┬──────┴──────┬───────┴────────────┬───────┘
-       │             │                    │
-       └─────────────┴────────────────────┘
-                     │
-              pattern matched?
-                     │
-                     ▼
-              ntfy.sh → your phone
+security_audit.sh
+├── Config: /etc/security_audit.conf
+├── Modules: 12 independent audit sections
+├── Output: Terminal (color) + Log file (plain text)
+├── Alerts: ntfy.sh push notifications
+└── Scheduler: systemd oneshot service + 6h timer
 ```
 
-**security_monitor.sh** runs as a systemd service and watches:
-- `/var/log/auth.log` — SSH logins, new users, sudo changes
-- systemd journal — service failures, OOM events
-- `/etc/passwd`, `/etc/shadow`, `/etc/sudoers` — file modifications via inotify
-- Any custom application log you configure
+## Audit Modules
 
-**security_audit.sh** is a standalone script for on-demand full system audits.
+| # | Module | What It Checks |
+|---|--------|----------------|
+| 1 | `logins` | Last 10 successful logins (`last`) and failed attempts (`lastb`) |
+| 2 | `sessions` | Currently active sessions (`who`) |
+| 3 | `users` | Users with login shells vs. whitelist; new accounts created in 30 days (via `.profile` ctime) |
+| 4 | `sudo` | Non-root sudoers rules and sudo group members |
+| 5 | `ssh` | PermitRootLogin, PasswordAuthentication, PubkeyAuthentication, authorized keys |
+| 6 | `ports` | Non-loopback listening ports vs. whitelist |
+| 7 | `cron` | Per-user crontabs and system cron directories |
+| 8 | `services` | Running services vs. whitelist; failed systemd units |
+| 9 | `setuid` | SETUID binaries not matching the safe baseline regex |
+| 10 | `files` | Files under `/etc` modified in the last 24 hours |
+| 11 | `network` | Established external connections (non-loopback) |
+| 12 | `docker` | Running containers, bind mounts vs. whitelist |
 
----
+## Quick Start
 
-## Notifications
-
-Only notifies on actionable events:
-
-| Event | Priority |
-|-------|----------|
-| New user created | 🚨 Urgent |
-| Sudo privilege granted | 🚨 Urgent |
-| Sensitive file modified (`/etc/passwd`, sudoers) | 🚨 Urgent |
-| OOM killer triggered | 🚨 Urgent |
-| Root access attempt | 🚨 Urgent |
-| SSH login (success) | 🔑 Default |
-| Service failed | ⚠️ High |
-| SSH login failure | ⚠️ Low |
-| Custom log pattern match | Configurable |
-
----
-
-## Requirements
-
-- Ubuntu 22.04+ (or any systemd-based Linux)
-- `curl`
-- `inotify-tools`
-- A free [ntfy.sh](https://ntfy.sh) topic (or self-hosted ntfy instance)
-
----
-
-## Installation
+### Automated Installation
 
 ```bash
-git clone https://github.com/yourusername/linux-security-monitor
+git clone https://github.com/EForce11/linux-security-monitor.git
 cd linux-security-monitor
 sudo ./install.sh
 ```
 
 The installer will:
-1. Install `curl` and `inotify-tools`
-2. Copy scripts to your home directory
-3. Ask for your ntfy topic and create config files
-4. Install and start the systemd service
+1. Copy `security_audit.sh` to `/usr/local/bin/`
+2. Create `/etc/security_audit.conf` from the example template
+3. Install and enable `systemd` service + timer (runs every 6 hours)
+4. Optionally configure your ntfy.sh topic for push notifications
 
----
+### Manual Installation
+
+```bash
+# Copy script
+sudo cp scripts/security_audit.sh /usr/local/bin/security_audit.sh
+sudo chmod 755 /usr/local/bin/security_audit.sh
+
+# Copy config
+sudo cp config/security_audit.conf.example /etc/security_audit.conf
+sudo chmod 600 /etc/security_audit.conf
+
+# Install systemd units
+sudo cp systemd/security-audit.service /etc/systemd/system/
+sudo cp systemd/security-audit.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now security-audit.timer
+```
+
+## Usage
+
+```bash
+# Full audit (all 12 modules)
+security_audit.sh
+
+# Specific sections only
+security_audit.sh --section users,ports,docker
+
+# Save output to log file (colors auto-stripped)
+security_audit.sh --output /var/log/security_audit.log
+
+# Suppress informational messages, show only warnings/alerts
+security_audit.sh --quiet
+
+# Send results via ntfy.sh push notification
+security_audit.sh --ntfy my-secret-topic
+
+# Combine options
+security_audit.sh --section ssh,ports --output /tmp/audit.log --ntfy my-topic --quiet
+```
+
+### Output Legend
+
+| Symbol | Meaning | Action |
+|--------|---------|--------|
+| `[•]` | Informational | No action needed |
+| `[✓]` Green | Passed check | Matches baseline |
+| `[!]` Yellow | Warning | Review recommended |
+| `[✗]` Red | Critical alert | Immediate action required |
 
 ## Configuration
 
-### Monitor config (`~/.security_monitor.conf`)
+Edit `/etc/security_audit.conf` (system-wide) or `~/.security_audit.conf` (per-user):
 
 ```bash
-NTFY_SERVER="https://ntfy.sh"
-NTFY_TOPIC="your-private-topic"
-WHITELIST_SUDO_USERS="ubuntu"
-```
+# Users that should have login shells (won't be flagged)
+WHITELIST_USERS="root ubuntu sync opc"
 
-### Audit config (`~/.security_audit.conf`)
+# Expected running services
+WHITELIST_SERVICES="systemd network ssh cron ufw fail2ban docker containerd tailscale rsyslog dbus accounts unattended snapd multipathd oracle unified polkit udisks ModemManager cloudflared fwupd getty serial-getty user@ security-audit"
 
-```bash
-WHITELIST_USERS="root ubuntu sync"
+# Expected listening ports
 WHITELIST_PORTS="22 53"
-WHITELIST_SERVICES="docker tailscale nginx ..."
+
+# Expected Docker bind mount paths
+WHITELIST_MOUNTS="/home/ubuntu/vaultwarden/vw-data"
+
+# ntfy.sh Push Notification Settings
+NTFY_TOPIC=""                  # Your private ntfy topic
+NTFY_SERVER="https://ntfy.sh"  # Or self-hosted instance
+NTFY_ONLY_ON_ISSUES=true       # Set to false to notify even when clean
 ```
 
-Both files are created from `config/*.conf.example` during install. Your real configs are gitignored by default — never commit them.
+## ntfy.sh Push Notifications
 
----
+The audit script integrates with [ntfy.sh](https://ntfy.sh) for real-time push notifications:
 
-## Adding Your Own Application Logs
+| Condition | Priority | Tags |
+|-----------|----------|------|
+| Critical alerts (`[✗]`) found | 🔴 `urgent` | 🚨 rotating_light, skull |
+| Warnings (`[!]`) only | 🟡 `default` | ⚠️ warning, shield |
+| All checks passed | 🟢 `low` | ✅ white_check_mark |
 
-You can watch any log file for any pattern by adding entries to `EXTRA_LOG_FILES` in `~/.security_monitor.conf`.
+**Setup:**
 
-Each entry requires 4 values in this order:
-1. Path to the log file
-2. Pattern to match (grep-compatible string)
-3. Notification title
-4. Priority: `low` | `default` | `high` | `urgent`
+1. Pick a topic at [ntfy.sh](https://ntfy.sh) (e.g., `my-server-security`)
+2. Subscribe on your phone via the [ntfy app](https://ntfy.sh/#subscribe)
+3. Configure the topic:
 
 ```bash
-# ~/.security_monitor.conf
+# Option A: In the config file
+NTFY_TOPIC="my-server-security"
 
-EXTRA_LOG_FILES=()
-
-# Vaultwarden — admin panel probe
-EXTRA_LOG_FILES+=(
-    "/home/ubuntu/vaultwarden/vw-data/vaultwarden.log"
-    "Invalid admin token"
-    "⚠️ Vaultwarden admin panel probe"
-    "high"
-)
-
-# Nginx — rate limiting
-EXTRA_LOG_FILES+=(
-    "/var/log/nginx/error.log"
-    "limiting requests"
-    "⚠️ Nginx rate limit hit"
-    "default"
-)
-
-# Your app — any pattern
-EXTRA_LOG_FILES+=(
-    "/var/log/myapp/app.log"
-    "CRITICAL"
-    "🚨 MyApp critical error"
-    "urgent"
-)
+# Option B: Via CLI flag (overrides config)
+security_audit.sh --ntfy my-server-security
 ```
 
-After editing, restart the service:
-```bash
-sudo systemctl restart security-monitor.service
-```
+## systemd Timer Management
 
----
-
-## Manual Audit
-
-Run a full system audit at any time:
+The audit runs automatically every 6 hours via `systemd` timer (replaces traditional cron).
 
 ```bash
-~/security_audit.sh
+# Check timer status
+systemctl status security-audit.timer
+
+# List all timers
+systemctl list-timers --all | grep security
+
+# View last audit logs
+journalctl -u security-audit.service -n 50
+
+# Follow logs in real-time
+journalctl -u security-audit.service -f
+
+# Manually trigger an audit
+sudo systemctl start security-audit.service
+
+# Temporarily disable
+sudo systemctl stop security-audit.timer
+
+# Re-enable
+sudo systemctl start security-audit.timer
 ```
 
-Options:
+## Uninstallation
+
 ```bash
-# Run specific sections only
-~/security_audit.sh --section users,ports,docker
-
-# Save output to a file (colors stripped automatically)
-~/security_audit.sh --output /var/log/audit.log
-
-# Only show warnings and alerts
-~/security_audit.sh --quiet
+sudo ./uninstall.sh
 ```
 
-Available sections: `logins`, `sessions`, `users`, `sudo`, `ssh`, `ports`, `cron`, `services`, `setuid`, `files`, `network`, `docker`
-
----
-
-## Useful Commands
+Or manually:
 
 ```bash
-# View live monitor logs
-journalctl -u security-monitor.service -f
-
-# Check service status
-systemctl status security-monitor.service
-
-# Restart after config change
-sudo systemctl restart security-monitor.service
+sudo systemctl stop security-audit.timer
+sudo systemctl disable security-audit.timer
+sudo rm /etc/systemd/system/security-audit.service
+sudo rm /etc/systemd/system/security-audit.timer
+sudo systemctl daemon-reload
+sudo rm /usr/local/bin/security_audit.sh
+sudo rm /etc/security_audit.conf  # optional
 ```
 
----
+## Project Structure
+
+```
+linux-security-monitor/
+├── scripts/
+│   └── security_audit.sh          # Main audit script (v3)
+├── config/
+│   └── security_audit.conf.example # Example configuration
+├── systemd/
+│   ├── security-audit.service      # systemd oneshot service
+│   └── security-audit.timer        # 6-hour recurring timer
+├── install.sh                      # Automated installer
+├── uninstall.sh                    # Automated uninstaller
+├── LICENSE
+└── README.md
+```
+
+## v3 Changelog
+
+- **Fixed:** Subshell variable loss — replaced pipe `|` with process substitution `< <(...)` in all `while read` loops
+- **Fixed:** SETUID regex — collapsed multi-line BRE into single-line ERE (`grep -vE`)
+- **Fixed:** Docker bind mount double-printing — replaced `A && B || C` with proper `if/elif/else`
+- **Fixed:** New user detection — switched from `/home` `mtime` to `.profile` `ctime -30` to eliminate false positives
+- **Added:** `WARN_COUNT` / `ALERT_COUNT` counters with issue tracking
+- **Added:** ntfy.sh notification dispatch with severity-based priority (`urgent` / `default` / `low`)
+- **Added:** systemd `Type=oneshot` service + 6-hour `.timer` (replaces cron)
+- **Added:** Automated `install.sh` with config setup and systemd integration
+- **Added:** System-wide config support (`/etc/security_audit.conf` checked before `~/.security_audit.conf`)
 
 ## License
 

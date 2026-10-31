@@ -1,0 +1,11 @@
+[Unit]
+Description=Linux Security Monitor Audit Service
+After=network-online.target docker.service tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/bin/security_audit.sh --output /var/log/security_audit.log
+StandardOutput=journal
+StandardError=journal
